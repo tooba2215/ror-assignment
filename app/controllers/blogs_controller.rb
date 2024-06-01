@@ -63,15 +63,23 @@ class BlogsController < ApplicationController
 
   def import
     file = params[:attachment]
-    data = CSV.parse(file.to_io, headers: true, encoding: 'utf8')
-    # Start code to handle CSV data
-    ActiveRecord::Base.transaction do
-      data.each do |row|
-        current_user.blogs.create!(row.to_h)
+    batch_size = 1000
+
+    CSV.foreach(file.to_io, headers: true, encoding: 'utf8') do |row|
+      @rows ||= []
+      @rows << row.to_h
+
+      if @rows.size >= batch_size
+        import_batch(@rows)
+        @rows = []
       end
     end
-    # End code to handle CSV data
-    redirect_to blogs_path
+
+    import_batch(@rows) if @rows.present?
+
+    redirect_to blogs_path, notice: 'Blogs imported successfully'
+  rescue StandardError => e
+    redirect_to blogs_path, alert: "There was an error importing blogs: #{e.message}"
   end
 
   private
@@ -80,6 +88,11 @@ class BlogsController < ApplicationController
       @blog = current_user.blogs.find(params[:id])
     end
 
+  def import_batch(rows)
+    ActiveRecord::Base.transaction do
+      Blog.insert_all(rows.map { |row| row.merge(user_id: current_user.id) })
+    end
+  end
     # Only allow a list of trusted parameters through.
     def blog_params
       params.require(:blog).permit(:title, :body, :user_id)
